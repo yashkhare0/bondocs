@@ -3,13 +3,15 @@
 Manages the loading and rendering of prompts for LLM interactions.
 """
 
+import re
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from jinja2 import Template
 
 
 def _load_template() -> Template:
+    """Load the Jinja2 template from the prompt.md file."""
     template_path = Path(__file__).parent / "prompt.md"
     if not template_path.exists():
         raise FileNotFoundError(f"Prompt template not found at {template_path}")
@@ -17,16 +19,37 @@ def _load_template() -> Template:
 
 
 def load_system_prompt() -> str:
-    """Load the system prompt from the top of prompt.md (after ---system---)."""
+    """Load the system prompt from the prompt.md file.
+
+    Extracts the system prompt section from between the '---system---'
+    delimiter and the first blank line that follows. Provides robust
+    error handling for various edge cases.
+
+    Returns:
+        The extracted system prompt or an empty string if not found
+
+    Raises:
+        FileNotFoundError: If the prompt template file doesn't exist
+    """
     template_path = Path(__file__).parent / "prompt.md"
     if not template_path.exists():
         raise FileNotFoundError(f"Prompt template not found at {template_path}")
+
     text = template_path.read_text()
+
+    # Define the pattern to match system prompt section
+    system_pattern = r"^---system---\s*\n(.*?)(?:\n\s*\n|\n*$)"
+    match = re.search(system_pattern, text, re.DOTALL | re.MULTILINE)
+
+    if match:
+        return match.group(1).strip()
+
+    # Fallback to the previous approach if regex doesn't match
     if text.startswith("---system---"):
-        # Get everything after ---system--- up to the first blank line
         lines = text.splitlines()
         system_lines = []
         found = False
+
         for line in lines:
             if found:
                 if line.strip() == "":
@@ -34,29 +57,67 @@ def load_system_prompt() -> str:
                 system_lines.append(line)
             elif line.strip() == "---system---":
                 found = True
-        return "\n".join(system_lines).strip()
+
+        if system_lines:
+            return "\n".join(system_lines).strip()
+
     return ""
 
 
+def render_prompt(
+    document_content: str,
+    summary: str,
+    doc_type: Optional[Literal["readme", "runbook", "changelog"]] = "readme",
+    file_path: Optional[str] = None,
+    commit_message: Optional[str] = None,
+) -> str:
+    """Render the prompt template for document updates.
+
+    Args:
+        document_content: The content of the document to update
+        summary: Summary of the changes
+        doc_type: Type of document being updated
+        file_path: Path to the file being updated (required for runbooks)
+        commit_message: Commit message (used primarily for changelog updates)
+
+    Returns:
+        Rendered prompt template with all context variables
+
+    Raises:
+        ValueError: If required parameters are missing for a specific document type
+    """
+    if doc_type == "runbook" and not file_path:
+        raise ValueError("file_path is required for runbook updates")
+
+    template = _load_template()
+    return template.render(
+        readme=document_content,  # Keep for backward compatibility
+        document=document_content,
+        summary=summary,
+        doc_type=doc_type,
+        file_path=file_path,
+        commit_message=commit_message,
+    )
+
+
+# Legacy function aliases for backward compatibility
 def render_runbook_prompt(
     readme: str,
     summary: str,
     file_path: str,
 ) -> str:
-    """Render the prompt template for runbook updates.
+    """Render the prompt template for runbook updates (legacy function).
 
     Args:
         readme: The content of the runbook to update
         summary: Summary of the changes
         file_path: Path to the runbook file being updated
     """
-    template = _load_template()
-    return template.render(
-        readme=readme,
+    return render_prompt(
+        document_content=readme,
         summary=summary,
         doc_type="runbook",
         file_path=file_path,
-        commit_message=None,
     )
 
 
@@ -65,45 +126,16 @@ def render_changelog_prompt(
     summary: str,
     commit_message: str,
 ) -> str:
-    """Render the prompt template for changelog updates.
+    """Render the prompt template for changelog updates (legacy function).
 
     Args:
         readme: The content of the changelog to update
         summary: Summary of the changes
         commit_message: Commit message for the changelog update
     """
-    template = _load_template()
-    return template.render(
-        readme=readme,
+    return render_prompt(
+        document_content=readme,
         summary=summary,
         doc_type="changelog",
-        file_path=None,
-        commit_message=commit_message,
-    )
-
-
-# Keep the generic function for backward compatibility
-def render_prompt(
-    readme: str,
-    summary: str,
-    doc_type: Literal["runbook", "changelog"] | None = None,
-    file_path: str | None = None,
-    commit_message: str | None = None,
-) -> str:
-    """Render the prompt template with the given README and summary.
-
-    Args:
-        readme: The content of the document to update
-        summary: Summary of the changes
-        doc_type: Type of document being updated (e.g. "runbook", "changelog")
-        file_path: Path to the file being updated
-        commit_message: Commit message (for changelog updates)
-    """
-    template = _load_template()
-    return template.render(
-        readme=readme,
-        summary=summary,
-        doc_type=doc_type,
-        file_path=file_path,
         commit_message=commit_message,
     )

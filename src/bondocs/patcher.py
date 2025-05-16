@@ -7,12 +7,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from bondocs.llm import LLMBackend
-
+from .llm import LLMBackend
 from .prompt import render_prompt  # jinja2 template render
 
 
-def generate_patch(summary: str) -> str:
+def generate_readme_patch(summary: str) -> str:
     """Generate a patch for README.md based on a diff summary.
 
     Args:
@@ -26,13 +25,13 @@ def generate_patch(summary: str) -> str:
         if Path("README.md").exists()
         else ""
     )
-    prompt = render_prompt(readme=readme, summary=summary)
+    prompt = render_prompt(document_content=readme, summary=summary, doc_type="readme")
     llm = LLMBackend()
     return llm.chat(prompt)
 
 
 def apply_patch(patch: str) -> bool:
-    """Apply a patch to the README.md file.
+    """Apply a patch to a documentation file.
 
     Args:
         patch: Unified diff string to apply.
@@ -42,7 +41,11 @@ def apply_patch(patch: str) -> bool:
     """
     if not patch.strip():
         return False
-    if "+++ b/README.md" not in patch:
+    if not (
+        "+++ b/README.md" in patch
+        or "+++ b/CHANGELOG.md" in patch
+        or "+++ b/docs/runbook" in patch
+    ):
         return False
     try:
         with tempfile.NamedTemporaryFile("w+", suffix=".patch", encoding="utf-8") as f:
@@ -58,3 +61,7 @@ def apply_patch(patch: str) -> bool:
     except Exception as e:
         print(f"[red]Error applying patch: {str(e)}[/]")
         return False
+
+
+# For backward compatibility
+generate_patch = generate_readme_patch

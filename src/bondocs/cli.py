@@ -8,12 +8,12 @@ import sys
 from pathlib import Path
 
 import click
-from rich import print
+from rich import print  # type: ignore
 
 from .changelog import update_changelog
 from .config import load
 from .diff import staged_diff, summarize
-from .patcher import apply_patch, generate_patch
+from .patcher import apply_patch, generate_readme_patch
 from .runbook import update_runbooks
 
 
@@ -303,65 +303,96 @@ Made with ❤️ by [Your Name](https://github.com/your-username)
 
 @app.command()
 def run():
-    """Patch README from staged diff."""
+    """Run bondocs on the current git diff."""
     diff = staged_diff()
     if not diff.strip():
-        sys.exit(0)
-    summary = summarize(diff)
-    patch = generate_patch(summary)
-    if not patch.strip():
-        print("[yellow]Bondocs: model returned empty patch[/]")
+        print("[yellow]No changes detected.[/]")
         return
+
+    summary = summarize(diff)
+    print(f"[cyan]Changes detected:\n{summary}[/]")
+
+    # Generate and apply README patch
+    patch = generate_readme_patch(summary)
+    if not patch.strip():
+        print("[yellow]No README changes needed.[/]")
+        return
+
     if apply_patch(patch):
-        subprocess.check_call(["git", "add", "README.md"])
-        print("[green]Bondocs: README.md updated and re‑staged[/]")
+        print("[green]README.md updated ✨[/]")
+        try:
+            subprocess.check_call(["git", "add", "README.md"])
+            print("[green]README.md re-staged.[/]")
+        except subprocess.CalledProcessError:
+            print("[yellow]Warning: Failed to re-stage README.md[/]")
     else:
-        print("[red]Bondocs: failed to apply patch[/]")
+        print("[red]Failed to update README.md.[/]")
 
 
 @app.command()
 def changelog():
-    """Update CHANGELOG.md based on staged changes."""
-    if update_changelog(""):
-        subprocess.check_call(["git", "add", "CHANGELOG.md"])
-        print("[green]Bondocs: CHANGELOG.md updated and re‑staged[/]")
+    """Update CHANGELOG.md based on staged diff."""
+    # Get commit message from last commit
+    try:
+        commit_message = subprocess.check_output(
+            ["git", "log", "-1", "--pretty=%B"],
+            text=True,
+        ).strip()
+    except subprocess.CalledProcessError:
+        print("[red]Error: Failed to get commit message.[/]")
+        sys.exit(1)
+
+    if update_changelog(commit_message):
+        print("[green]CHANGELOG.md updated ✨[/]")
+        try:
+            subprocess.check_call(["git", "add", "CHANGELOG.md"])
+            print("[green]CHANGELOG.md re-staged.[/]")
+        except subprocess.CalledProcessError:
+            print("[yellow]Warning: Failed to re-stage CHANGELOG.md[/]")
     else:
-        print("[red]Bondocs: failed to update changelog[/]")
+        print("[yellow]No CHANGELOG.md changes needed.[/]")
 
 
 @app.command()
 def runbook():
-    """Update runbooks based on staged changes."""
+    """Update runbooks based on staged diff."""
     if update_runbooks():
-        # Add all runbook files
-        runbook_dir = Path(".") / "docs" / "runbook"
-        if runbook_dir.exists():
+        print("[green]Runbooks updated ✨[/]")
+        try:
             subprocess.check_call(["git", "add", "docs/runbook/*.md"])
-        print("[green]Bondocs: Runbooks updated and re‑staged[/]")
+            print("[green]Runbooks re-staged.[/]")
+        except subprocess.CalledProcessError:
+            print("[yellow]Warning: Failed to re-stage runbooks[/]")
     else:
-        print("[red]Bondocs: failed to update runbooks[/]")
+        print("[yellow]No runbook changes needed.[/]")
 
 
 @app.command()
 def diff():
-    """Show proposed README patch, don't apply."""
-    diff = staged_diff()
-    if not diff.strip():
-        print("[yellow]Bondocs: no staged changes[/]")
+    """Show proposed README patch without applying it."""
+    git_diff = staged_diff()
+    if not git_diff.strip():
+        print("[yellow]No changes detected.[/]")
         return
-    summary = summarize(diff)
-    patch = generate_patch(summary)
+
+    summary = summarize(git_diff)
+    print(f"[cyan]Changes detected:\n{summary}[/]")
+
+    # Generate patch
+    patch = generate_readme_patch(summary)
     if not patch.strip():
-        print("[yellow]Bondocs: model returned empty patch[/]")
+        print("[yellow]No README changes needed.[/]")
         return
+
+    print("\n[green]Proposed README patch:[/]\n")
     print(patch)
 
 
 @app.command()
 def config():
-    """Print effective configuration."""
+    """Show current configuration."""
     config = load()
-    print("[bold]Effective configuration:[/]")
+    print("[green]Current configuration:[/]")
     for key, value in config.items():
         print(f"  {key}: {value}")
 

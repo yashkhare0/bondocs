@@ -5,18 +5,219 @@ Ollama, OpenAI, Anthropic, and Azure.
 """
 
 import os
+from abc import ABC, abstractmethod
+from typing import Any, Union
 
 import httpx
 from dotenv import load_dotenv
-from langchain.schema import AIMessage, HumanMessage, SystemMessage
-from langchain_community.chat_models import ChatOllama
-from langchain_openai import ChatOpenAI
+
+# Type ignore comments for libraries without stubs
+from langchain.schema import AIMessage, HumanMessage, SystemMessage  # type: ignore
 
 from .config import env, get
 from .prompt import load_system_prompt
 
 # Load environment variables
 load_dotenv()
+
+
+class LLMProvider(ABC):
+    """Abstract base class for LLM providers."""
+
+    @abstractmethod
+    def generate_response(
+        self, messages: list[Union[SystemMessage, HumanMessage]]
+    ) -> Any:
+        """Generate a response from the LLM based on the input messages."""
+        pass
+
+    @classmethod
+    def is_available(cls) -> bool:
+        """Check if the provider is available for use."""
+        return True
+
+
+class OllamaProvider(LLMProvider):
+    """Ollama provider for local LLM inference."""
+
+    def __init__(self, model: str):
+        """Initialize the Ollama provider.
+
+        Args:
+            model (str): The model to use.
+        """
+        # Import here to avoid startup overhead if not used
+        from langchain_community.chat_models import ChatOllama  # type: ignore
+
+        self.model = model
+        self.base_url = os.getenv("API_URL", "http://localhost:11434")
+        self.client = ChatOllama(
+            model=model,
+            temperature=0.2,
+            base_url=self.base_url,
+        )
+
+    def generate_response(
+        self, messages: list[Union[SystemMessage, HumanMessage]]
+    ) -> Any:
+        """Generate a response from the LLM based on the input messages."""
+        return self.client(messages)
+
+    @classmethod
+    def is_available(cls) -> bool:
+        """Check if Ollama is running and available."""
+        try:
+            httpx.get("http://localhost:11434", timeout=0.2)
+            return True
+        except Exception:
+            return False
+
+
+class OpenAIProvider(LLMProvider):
+    """OpenAI provider for cloud LLM inference."""
+
+    def __init__(self, model: str, max_tokens: int):
+        """Initialize the OpenAI provider.
+
+        Args:
+            model (str): The model to use.
+            max_tokens (int): The maximum number of tokens to generate.
+
+        Raises:
+            ValueError: If the OpenAI API key is not set.
+        """
+        # Import here to avoid startup overhead if not used
+        from langchain_openai import ChatOpenAI  # type: ignore
+
+        api_key = env("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "OPENAI_API_KEY environment variable is required for OpenAI provider"
+            )
+
+        self.model = model
+        self.client = ChatOpenAI(
+            model_name=model,
+            temperature=0.2,
+            max_tokens=max_tokens,
+            api_key=api_key,
+        )
+
+    def generate_response(
+        self, messages: list[Union[SystemMessage, HumanMessage]]
+    ) -> Any:
+        """Generate a response from the LLM based on the input messages."""
+        return self.client(messages)
+
+
+class AnthropicProvider(LLMProvider):
+    """Anthropic provider for cloud LLM inference."""
+
+    def __init__(self, model: str, max_tokens: int):
+        """Initialize the Anthropic provider.
+
+        Args:
+            model (str): The model to use.
+            max_tokens (int): The maximum number of tokens to generate.
+
+        Raises:
+            ValueError: If the Anthropic API key is not set.
+        """
+        # Import here to avoid startup overhead if not used
+        from langchain_anthropic import ChatAnthropic  # type: ignore
+
+        api_key = env("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "ANTHROPIC_API_KEY environment variable is required for Anthropic provider"  # noqa: E501
+            )
+
+        self.model = model
+        self.client = ChatAnthropic(
+            model=model,
+            temperature=0.2,
+            max_tokens=max_tokens,
+            anthropic_api_key=api_key,
+        )
+
+    def generate_response(
+        self, messages: list[Union[SystemMessage, HumanMessage]]
+    ) -> Any:
+        """Generate a response from the LLM based on the input messages."""
+        return self.client(messages)
+
+
+class AzureProvider(LLMProvider):
+    """Azure provider for cloud LLM inference."""
+
+    def __init__(self, model: str, max_tokens: int):
+        """Initialize the Azure provider.
+
+        Args:
+            model (str): The model to use.
+            max_tokens (int): The maximum number of tokens to generate.
+
+        Raises:
+            ValueError: If the Azure API key is not set.
+        """
+        # Import here to avoid startup overhead if not used
+        from langchain_openai import AzureChatOpenAI  # type: ignore
+
+        api_key = env("AZURE_AI_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "AZURE_AI_API_KEY environment variable is required for Azure provider"
+            )
+
+        self.model = model
+        self.client = AzureChatOpenAI(
+            deployment_name=model,
+            temperature=0.2,
+            max_tokens=max_tokens,
+            api_key=api_key,
+            api_version="2024-02-15-preview",
+        )
+
+    def generate_response(
+        self, messages: list[Union[SystemMessage, HumanMessage]]
+    ) -> Any:
+        """Generate a response from the LLM based on the input messages."""
+        return self.client(messages)
+
+
+class ProviderFactory:
+    """Factory for creating LLM providers."""
+
+    _PROVIDERS = {
+        "ollama": OllamaProvider,
+        "openai": OpenAIProvider,
+        "anthropic": AnthropicProvider,
+        "azure": AzureProvider,
+    }
+
+    @classmethod
+    def create(cls, provider_name: str) -> LLMProvider:
+        """Create an LLM provider instance.
+
+        Args:
+            provider_name: Name of the provider to create.
+
+        Returns:
+            An instance of the requested provider.
+
+        Raises:
+            ValueError: If the provider is not supported.
+        """
+        provider_class = cls._PROVIDERS.get(provider_name.lower())
+        if not provider_class:
+            raise ValueError(f"Unsupported provider: {provider_name}")
+
+        model = get("model", "mistral-small3.1:latest")
+        max_tokens = get("max_tokens", 1024)
+
+        if provider_name == "ollama":
+            return provider_class(model)
+        return provider_class(model, max_tokens)
 
 
 class LLMBackend:
@@ -33,78 +234,39 @@ class LLMBackend:
         Detects and initializes the appropriate language model based on
         the current configuration.
         """
-        self.backend = self._detect()
+        self.backend = self._initialize_provider()
         self.system_prompt = load_system_prompt()
 
-    def _detect(self):
-        provider = get("provider", "ollama").lower()
-        model = get("model", "mistral-small3.1:latest")
+    def _initialize_provider(self) -> LLMProvider:
+        """Initialize the appropriate provider based on configuration and availability.
 
-        if provider == "ollama":
-            try:
-                # Check if Ollama is running
-                httpx.get("http://localhost:11434", timeout=0.2)
-                return ChatOllama(
-                    model=model,
-                    temperature=0.2,
-                    base_url=os.getenv("API_URL", "http://localhost:11434"),
-                )
-            except Exception as e:
-                # Get fallback provider from configuration
-                fallback_provider = get("fallback_provider", "openai").lower()
+        Returns:
+            An initialized provider instance based on configuration
+
+        Raises:
+            ValueError: If no suitable provider can be initialized
+        """
+        primary_provider = get("provider", "ollama").lower()
+        fallback_provider = get("fallback_provider", "openai").lower()
+
+        # Try primary provider first
+        if primary_provider == "ollama" and not OllamaProvider.is_available():
+            print(
+                f"[yellow]Warning: Ollama not available. "
+                f"Falling back to {fallback_provider}.[/]"
+            )
+            return ProviderFactory.create(fallback_provider)
+
+        try:
+            return ProviderFactory.create(primary_provider)
+        except ValueError as e:
+            if primary_provider != fallback_provider:
                 print(
-                    f"[yellow]Warning: Ollama not available ({str(e)}). "
+                    f"[yellow]Warning: {str(e)}. "
                     f"Falling back to {fallback_provider}.[/]"
                 )
-                provider = fallback_provider
-
-        if provider == "openai":
-            api_key = env("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "OPENAI_API_KEY environment variable is required "
-                    "for OpenAI provider"
-                )
-            return ChatOpenAI(
-                model_name=model,
-                temperature=0.2,
-                max_tokens=get("max_tokens", 1024),
-                api_key=api_key,
-            )
-
-        if provider == "anthropic":
-            api_key = env("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "ANTHROPIC_API_KEY environment variable is required "
-                    "for Anthropic provider"
-                )
-            from langchain_anthropic import ChatAnthropic
-
-            return ChatAnthropic(
-                model=model,
-                temperature=0.2,
-                max_tokens=get("max_tokens", 1024),
-                anthropic_api_key=api_key,
-            )
-
-        if provider == "azure":
-            api_key = env("AZURE_AI_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "AZURE_AI_API_KEY environment variable is required for Azure provider"  # noqa: E501
-                )
-            from langchain_openai import AzureChatOpenAI
-
-            return AzureChatOpenAI(
-                deployment_name=model,
-                temperature=0.2,
-                max_tokens=get("max_tokens", 1024),
-                api_key=api_key,
-                api_version="2024-02-15-preview",
-            )
-
-        raise ValueError(f"Unsupported provider: {provider}")
+                return ProviderFactory.create(fallback_provider)
+            raise
 
     def chat(self, prompt: str) -> str:
         """Send a prompt to the LLM and get a response.
@@ -119,7 +281,7 @@ class LLMBackend:
             SystemMessage(content=self.system_prompt),
             HumanMessage(content=prompt),
         ]
-        resp = self.backend(messages)
+        resp = self.backend.generate_response(messages)
         # some backends return list
         if isinstance(resp, list):
             resp = resp[0]
