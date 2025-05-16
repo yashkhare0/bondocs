@@ -14,9 +14,6 @@ from collections.abc import Sequence
 from typing import Any, TypeVar, Union, cast
 
 import httpx
-from dotenv import load_dotenv
-
-# Type ignore comments for libraries without stubs
 from langchain.schema import (  # type: ignore
     AIMessage,
     BaseMessage,
@@ -26,9 +23,6 @@ from langchain.schema import (  # type: ignore
 
 from .config import env, get
 from .prompt import load_system_prompt
-
-# Load environment variables
-load_dotenv()
 
 # Provider instance cache to avoid recreating providers
 _provider_instances: dict[str, weakref.ref] = {}

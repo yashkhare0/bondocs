@@ -6,7 +6,7 @@ Manages the loading and rendering of prompts for LLM interactions.
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from jinja2 import Template
 
@@ -80,8 +80,7 @@ def render_prompt(
     document_content: str,
     summary: str,
     doc_type: Optional[Literal["readme", "runbook", "changelog"]] = "readme",
-    file_path: Optional[str] = None,
-    commit_message: Optional[str] = None,
+    **kwargs: Any,
 ) -> str:
     """Render the prompt template for document updates.
 
@@ -89,8 +88,9 @@ def render_prompt(
         document_content: The content of the document to update
         summary: Summary of the changes
         doc_type: Type of document being updated
-        file_path: Path to the file being updated (required for runbooks)
-        commit_message: Commit message (used primarily for changelog updates)
+        **kwargs: Additional context variables to pass to the template
+            - file_path: Path to the file being updated (required for runbooks)
+            - commit_message: Commit message (used primarily for changelog updates)
 
     Returns:
         Rendered prompt template with all context variables
@@ -98,18 +98,21 @@ def render_prompt(
     Raises:
         ValueError: If required parameters are missing for a specific document type
     """
-    if doc_type == "runbook" and not file_path:
+    # Parameter validation
+    if doc_type == "runbook" and "file_path" not in kwargs:
         raise ValueError("file_path is required for runbook updates")
 
+    # Create the template context
+    context = {
+        "readme": document_content,  # Keep for backward compatibility
+        "document": document_content,
+        "summary": summary,
+        "doc_type": doc_type,
+        **kwargs,
+    }
+
     template = _load_template()
-    return template.render(
-        readme=document_content,  # Keep for backward compatibility
-        document=document_content,
-        summary=summary,
-        doc_type=doc_type,
-        file_path=file_path,
-        commit_message=commit_message,
-    )
+    return template.render(**context)
 
 
 # Legacy function aliases for backward compatibility

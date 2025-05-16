@@ -15,6 +15,7 @@ from .config import load
 from .diff import staged_diff, summarize
 from .patcher import apply_patch, generate_readme_patch
 from .runbook import update_runbooks
+from .templates import BONDOCS_CONFIG, DEFAULT_README, PRE_COMMIT_CONFIG
 
 
 @click.group()
@@ -22,262 +23,83 @@ def app():
     """Bondocs – keep your README in sync automatically."""
 
 
-@app.command()
-def init():
-    """Initialize bondocs in the current project."""
-    # Check if we're in a git repository
+def _create_file(path: Path, content: str, file_type: str) -> None:
+    """Create a file if it doesn't exist.
+
+    Args:
+        path: Path to the file to create
+        content: Content to write to the file
+        file_type: Type of file for logging messages
+    """
+    if not path.exists():
+        path.write_text(content)
+        print(f"[green]Created {file_type}[/]")
+    else:
+        print(f"[yellow]Warning: {file_type} already exists[/]")
+
+
+def _check_git_repo() -> bool:
+    """Check if the current directory is a git repository.
+
+    Returns:
+        True if the current directory is a git repository, False otherwise
+    """
     try:
         subprocess.check_call(
             ["git", "rev-parse", "--is-inside-work-tree"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        return True
     except subprocess.CalledProcessError:
+        return False
+
+
+def _get_staged_changes() -> tuple[str, str]:
+    """Get the staged changes as a diff and summary.
+
+    Returns:
+        A tuple of (diff, summary) strings
+    """
+    diff = staged_diff()
+    if not diff.strip():
+        return "", ""
+
+    return diff, summarize(diff)
+
+
+def _stage_file(file_path: str) -> bool:
+    """Stage a file with git add.
+
+    Args:
+        file_path: Path to the file to stage
+
+    Returns:
+        True if the file was staged successfully, False otherwise
+    """
+    try:
+        subprocess.check_call(["git", "add", file_path])
+        print(f"[green]{file_path} re-staged.[/]")
+        return True
+    except subprocess.CalledProcessError:
+        print(f"[yellow]Warning: Failed to re-stage {file_path}[/]")
+        return False
+
+
+@app.command()
+def init():
+    """Initialize bondocs in the current project."""
+    # Check if we're in a git repository
+    if not _check_git_repo():
         print("[red]Error: Not a git repository. Please run 'git init' first.[/]")
         sys.exit(1)
 
-    # Create .pre-commit-config.yaml if it doesn't exist
-    precommit_path = Path(".pre-commit-config.yaml")
-    if not precommit_path.exists():
-        precommit_content = """default_language_version:
-  python: python3
-
-repos:
-  - repo: https://github.com/your-org/bondocs
-    rev: v0.1.0
-    hooks:
-      - id: bondocs
-        stages: [commit]
-        language: system
-        entry: bondocs run
-        pass_filenames: false
-"""
-        precommit_path.write_text(precommit_content)
-        print("[green]Created .pre-commit-config.yaml[/]")
-    else:
-        print("[yellow]Warning: .pre-commit-config.yaml already exists[/]")
-
-    # Create .bondocs.toml if it doesn't exist
-    bondocs_path = Path(".bondocs.toml")
-    if not bondocs_path.exists():
-        bondocs_content = """# Bondocs configuration
-# LLM Configuration
-model = "gpt-3.5-turbo"  # or "mixtral" if using Ollama
-max_tokens = 1024        # Maximum tokens for LLM response
-temperature = 0.2        # LLM temperature (0.0 to 1.0)
-
-# Documentation Settings
-[documentation]
-# Files to monitor for changes
-watch_files = [
-    "src/**/*.py",      # Python source files
-    "tests/**/*.py",    # Test files
-    "*.md"              # Markdown files
-]
-
-# Sections to update in README
-sections = [
-    "Installation",
-    "Usage",
-    "API Reference",
-    "Examples"
-]
-
-# Custom prompt templates
-[prompts]
-# Custom prompt for specific file types
-python = \"\"\"
-Update the documentation to reflect changes in the Python code.
-Focus on function signatures, parameters, and return types.
-\"\"\"
-
-# Ignore patterns for files
-[ignore]
-patterns = [
-    "*.pyc",
-    "__pycache__",
-    ".git/*",
-    "venv/*"
-]
-
-# Output formatting
-[format]
-# Maximum line length for generated documentation
-max_line_length = 88
-# Whether to use code blocks for examples
-use_code_blocks = true
-# Whether to include type hints in documentation
-include_type_hints = true
-"""
-        bondocs_path.write_text(bondocs_content)
-        print("[green]Created .bondocs.toml[/]")
-    else:
-        print("[yellow]Warning: .bondocs.toml already exists[/]")
-
-    # Create README.md if it doesn't exist
-    readme_path = Path("README.md")
-    if not readme_path.exists():
-        readme_content = '''# Project Name
-
-[![PyPI version](https://badge.fury.io/py/your-package-name.svg)]
-(https://badge.fury.io/py/your-package-name)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)]
-(https://opensource.org/licenses/MIT)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)]
-(https://github.com/psf/black)
-
-Brief description of your project - what it does and why it's useful.
-
-## ✨ Features
-
-- **Feature 1**: Description of the first major feature
-- **Feature 2**: Description of the second major feature
-- **Feature 3**: Description of the third major feature
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Python 3.9 or higher
-- pip (Python package manager)
-
-### Installation
-
-```bash
-# Install from PyPI
-pip install your-package-name
-
-# Or install from source
-git clone https://github.com/your-username/your-repo.git
-cd your-repo
-pip install -e .
-```
-
-## 📖 Usage
-
-### Basic Usage
-
-```python
-from your_package import YourClass
-
-# Create an instance
-instance = YourClass()
-
-# Use the instance
-result = instance.do_something()
-```
-
-### Advanced Usage
-
-```python
-# Example of advanced usage
-from your_package import advanced_feature
-
-result = advanced_feature(
-    param1="value1",
-    param2="value2"
-)
-```
-
-## 🔧 Configuration
-
-The package can be configured using environment variables or a configuration file:
-
-```python
-# Using environment variables
-export YOUR_PACKAGE_SETTING="value"
-
-# Using configuration file
-from your_package import config
-config.load("config.yaml")
-```
-
-## 📚 API Reference
-
-### Main Classes
-
-#### `YourClass`
-
-The main class of the package.
-
-```python
-class YourClass:
-    def __init__(self, param1: str, param2: int = 0):
-        """
-        Initialize the class.
-
-        Args:
-            param1: Description of param1
-            param2: Description of param2
-        """
-        pass
-```
-
-### Functions
-
-#### `do_something()`
-
-Description of what the function does.
-
-```python
-def do_something(param1: str) -> bool:
-    """
-    Do something with the input.
-
-    Args:
-        param1: Description of param1
-
-    Returns:
-        bool: Description of return value
-
-    Raises:
-        ValueError: Description of when this error occurs
-    """
-    pass
-```
-
-## 🧪 Testing
-
-Run the test suite:
-
-```bash
-# Install test dependencies
-pip install -e ".[test]"
-
-# Run tests
-pytest
-```
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- List any credits, inspirations, etc.
-
-## 📞 Support
-
-- GitHub Issues: [Create an issue](https://github.com/your-username/your-repo/issues)
-- Email: your-email@example.com
-- Discord: [Join our server](https://discord.gg/your-server)
-
----
-
-Made with ❤️ by [Your Name](https://github.com/your-username)
-'''  # noqa: E501
-        readme_path.write_text(readme_content)
-        print("[green]Created README.md[/]")
-    else:
-        print("[yellow]Warning: README.md already exists[/]")
+    # Create necessary files
+    _create_file(
+        Path(".pre-commit-config.yaml"), PRE_COMMIT_CONFIG, ".pre-commit-config.yaml"
+    )
+    _create_file(Path(".bondocs.toml"), BONDOCS_CONFIG, ".bondocs.toml")
+    _create_file(Path("README.md"), DEFAULT_README, "README.md")
 
     # Install pre-commit hooks
     try:
@@ -304,12 +126,11 @@ Made with ❤️ by [Your Name](https://github.com/your-username)
 @app.command()
 def run():
     """Run bondocs on the current git diff."""
-    diff = staged_diff()
-    if not diff.strip():
+    diff, summary = _get_staged_changes()
+    if not summary:
         print("[yellow]No changes detected.[/]")
         return
 
-    summary = summarize(diff)
     print(f"[cyan]Changes detected:\n{summary}[/]")
 
     # Generate and apply README patch
@@ -320,11 +141,7 @@ def run():
 
     if apply_patch(patch):
         print("[green]README.md updated ✨[/]")
-        try:
-            subprocess.check_call(["git", "add", "README.md"])
-            print("[green]README.md re-staged.[/]")
-        except subprocess.CalledProcessError:
-            print("[yellow]Warning: Failed to re-stage README.md[/]")
+        _stage_file("README.md")
     else:
         print("[red]Failed to update README.md.[/]")
 
@@ -344,11 +161,7 @@ def changelog():
 
     if update_changelog(commit_message):
         print("[green]CHANGELOG.md updated ✨[/]")
-        try:
-            subprocess.check_call(["git", "add", "CHANGELOG.md"])
-            print("[green]CHANGELOG.md re-staged.[/]")
-        except subprocess.CalledProcessError:
-            print("[yellow]Warning: Failed to re-stage CHANGELOG.md[/]")
+        _stage_file("CHANGELOG.md")
     else:
         print("[yellow]No CHANGELOG.md changes needed.[/]")
 
@@ -370,12 +183,11 @@ def runbook():
 @app.command()
 def diff():
     """Show proposed README patch without applying it."""
-    git_diff = staged_diff()
-    if not git_diff.strip():
+    diff, summary = _get_staged_changes()
+    if not summary:
         print("[yellow]No changes detected.[/]")
         return
 
-    summary = summarize(git_diff)
     print(f"[cyan]Changes detected:\n{summary}[/]")
 
     # Generate patch
