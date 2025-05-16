@@ -11,7 +11,7 @@ import os
 import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Any, TypeVar, Union, cast
+from typing import Any, Optional, TypeVar, Union, cast
 
 import httpx
 from langchain.schema import (  # type: ignore
@@ -21,9 +21,15 @@ from langchain.schema import (  # type: ignore
     SystemMessage,
 )
 
-from .config import config
-from .interfaces import LLMError, LLMInterface
-from .prompt import load_system_prompt
+from bondocs.core.config import config
+from bondocs.core.errors import (
+    ErrorSeverity,
+    LLMError,
+    handle_errors,
+    log_error,
+)
+from bondocs.core.interfaces import LLMInterface
+from bondocs.providers.prompt import load_system_prompt
 
 # Provider instance cache to avoid recreating providers
 _provider_instances: dict[str, weakref.ref] = {}
@@ -68,23 +74,19 @@ class OllamaProvider(LLMProvider):
             base_url=self.base_url,
         )
 
+    @handle_errors(error_type=LLMError)
     def generate_response(
         self, messages: Sequence[Union[SystemMessage, HumanMessage]]
     ) -> Any:
         """Generate a response from the LLM based on the input messages."""
-        try:
-            return self.client(cast(list[BaseMessage], list(messages)))
-        except Exception as e:
-            raise LLMError(f"Error generating response from Ollama: {str(e)}") from e
+        return self.client(cast(list[BaseMessage], list(messages)))
 
     @classmethod
+    @handle_errors(Exception, default_return=False)
     def is_available(cls) -> bool:
         """Check if Ollama is running and available."""
-        try:
-            httpx.get("http://localhost:11434", timeout=0.2)
-            return True
-        except Exception:
-            return False
+        httpx.get("http://localhost:11434", timeout=0.2)
+        return True
 
 
 class OpenAIProvider(LLMProvider):
@@ -117,14 +119,12 @@ class OpenAIProvider(LLMProvider):
             api_key=api_key,  # OpenAI will convert this to SecretStr internally
         )
 
+    @handle_errors(error_type=LLMError)
     def generate_response(
         self, messages: Sequence[Union[SystemMessage, HumanMessage]]
     ) -> Any:
         """Generate a response from the LLM based on the input messages."""
-        try:
-            return self.client(cast(list[BaseMessage], list(messages)))
-        except Exception as e:
-            raise LLMError(f"Error generating response from OpenAI: {str(e)}") from e
+        return self.client(cast(list[BaseMessage], list(messages)))
 
 
 class AnthropicProvider(LLMProvider):
@@ -160,14 +160,12 @@ class AnthropicProvider(LLMProvider):
             timeout=60,  # Add timeout parameter
         )
 
+    @handle_errors(error_type=LLMError)
     def generate_response(
         self, messages: Sequence[Union[SystemMessage, HumanMessage]]
     ) -> Any:
         """Generate a response from the LLM based on the input messages."""
-        try:
-            return self.client(cast(list[BaseMessage], list(messages)))
-        except Exception as e:
-            raise LLMError(f"Error generating response from Anthropic: {str(e)}") from e
+        return self.client(cast(list[BaseMessage], list(messages)))
 
 
 class AzureProvider(LLMProvider):
@@ -201,14 +199,12 @@ class AzureProvider(LLMProvider):
             api_version="2024-02-15-preview",
         )
 
+    @handle_errors(error_type=LLMError)
     def generate_response(
         self, messages: Sequence[Union[SystemMessage, HumanMessage]]
     ) -> Any:
         """Generate a response from the LLM based on the input messages."""
-        try:
-            return self.client(cast(list[BaseMessage], list(messages)))
-        except Exception as e:
-            raise LLMError(f"Error generating response from Azure: {str(e)}") from e
+        return self.client(cast(list[BaseMessage], list(messages)))
 
 
 class ProviderFactory:
@@ -222,6 +218,7 @@ class ProviderFactory:
     }
 
     @classmethod
+    @handle_errors(error_type=LLMError, log_traceback=True)
     def create(cls, provider_name: str, reuse: bool = True) -> LLMProvider:
         """Create an LLM provider instance.
 
@@ -251,30 +248,24 @@ class ProviderFactory:
             provider_ref = _provider_instances[instance_key]
             provider = provider_ref()
             if provider is not None:
-                return provider  # Type is correct as provider is LLMProvider
+                return provider
 
         # Create a new provider instance
-        try:
-            if provider_name == "ollama":
-                provider = provider_class(model)
-            else:
-                provider = provider_class(model, max_tokens)
+        if provider_name == "ollama":
+            provider = provider_class(model)
+        else:
+            provider = provider_class(model, max_tokens)
 
-            if reuse:
-                # Store weakref to avoid memory leaks
-                _provider_instances[instance_key] = weakref.ref(provider)
+        # Cache the provider instance
+        if reuse:
+            _provider_instances[instance_key] = weakref.ref(provider)
 
-            return provider  # Type is correct as provider is LLMProvider
-        except Exception as e:
-            raise LLMError(
-                f"Failed to create provider {provider_name}: {str(e)}"
-            ) from e
+        return provider
 
     @classmethod
     def clear_cached_providers(cls) -> None:
         """Clear all cached provider instances."""
-        global _provider_instances
-        _provider_instances = {}
+        _provider_instances.clear()
 
 
 class LLMBackend(LLMInterface):
@@ -286,34 +277,31 @@ class LLMBackend(LLMInterface):
     """
 
     _instance = None
-    _initialized = False
+    _initialized: bool = False
+    _provider: Optional[LLMProvider] = None
+    _system_prompt: Optional[str] = None
 
     def __new__(cls):
-        """Create a singleton instance of LLMBackend."""
+        """Create a singleton instance of the LLM backend."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self):
-        """Initialize the LLM backend.
-
-        Detects and initializes the appropriate language model based on
-        the current configuration.
-        """
-        # Skip initialization if already done (singleton pattern)
-        if LLMBackend._initialized:
+        """Initialize the LLM backend."""
+        # Skip initialization if already initialized
+        if self._initialized:
             return
-
-        self._provider = None
-        self._system_prompt = None
-        LLMBackend._initialized = True
+        self._initialized = True
+        self._provider = self._initialize_provider()
+        self._system_prompt = load_system_prompt()
 
     @property
     def backend(self) -> LLMProvider:
-        """Get the LLM provider instance, initializing it if needed.
+        """Get the LLM provider backend.
 
         Returns:
-            The LLM provider instance
+            The LLM provider backend.
         """
         if self._provider is None:
             self._provider = self._initialize_provider()
@@ -321,113 +309,116 @@ class LLMBackend(LLMInterface):
 
     @property
     def system_prompt(self) -> str:
-        """Get the system prompt, loading it if needed.
+        """Get the system prompt.
 
         Returns:
-            The system prompt string
+            The system prompt.
         """
         if self._system_prompt is None:
             self._system_prompt = load_system_prompt()
         return self._system_prompt
 
+    @handle_errors(error_type=LLMError, severity=ErrorSeverity.ERROR)
     def _initialize_provider(self) -> LLMProvider:
-        """Initialize the appropriate provider based on configuration and availability.
+        """Initialize the LLM provider based on configuration.
 
         Returns:
-            An initialized provider instance based on configuration
+            The initialized LLM provider.
 
         Raises:
-            LLMError: If no suitable provider can be initialized
+            LLMError: If no provider could be initialized.
         """
-        primary_provider = config.get_value("provider", "ollama").lower()
-        fallback_provider = config.get_value("fallback_provider", "openai").lower()
+        # Get primary provider from config
+        primary_provider = config.get_value("provider", "ollama")
+        fallback_provider = config.get_value("fallback_provider", "openai")
 
-        # Try primary provider first
-        if primary_provider == "ollama" and not OllamaProvider.is_available():
-            print(
-                f"[yellow]Warning: Ollama not available. "
-                f"Falling back to {fallback_provider}.[/]"
-            )
-            return ProviderFactory.create(fallback_provider)
-
+        # Try to create the primary provider
         try:
-            return ProviderFactory.create(primary_provider)
-        except LLMError as e:
-            if primary_provider != fallback_provider:
-                print(
-                    f"[yellow]Warning: {str(e)}. "
-                    f"Falling back to {fallback_provider}.[/]"
+            # Special case for Ollama - check if it's available first
+            if primary_provider == "ollama" and not OllamaProvider.is_available():
+                log_error(
+                    LLMError(
+                        "Ollama not available, falling back to alternative provider"
+                    ),
+                    severity=ErrorSeverity.WARNING,
                 )
-                try:
-                    return ProviderFactory.create(fallback_provider)
-                except LLMError as e2:
-                    raise LLMError(
-                        f"Failed to initialize primary and fallback providers: {str(e2)}"  # noqa: E501
-                    ) from e2
-            raise
+                provider = ProviderFactory.create(fallback_provider)
+            else:
+                provider = ProviderFactory.create(primary_provider)
+            return provider
+        except Exception as e:
+            # If the primary provider fails, try the fallback
+            if primary_provider != fallback_provider:
+                log_error(
+                    LLMError(
+                        f"Failed to initialize {primary_provider}, trying {fallback_provider}: {str(e)}"  # noqa: E501
+                    ),
+                    severity=ErrorSeverity.WARNING,
+                )
+                provider = ProviderFactory.create(fallback_provider)
+                return provider
+            # If there's no fallback, re-raise the error
+            raise LLMError(f"Failed to initialize LLM provider: {str(e)}") from e
 
+    @handle_errors(error_type=LLMError, severity=ErrorSeverity.ERROR)
     def generate_response(self, prompt: str) -> str:
         """Generate a response to a prompt.
 
         Args:
-            prompt: The prompt to generate a response for
+            prompt: The prompt to generate a response for.
 
         Returns:
-            The generated response
+            The generated response.
 
         Raises:
-            LLMError: If there was an error generating a response
+            LLMError: If there was an error generating a response.
         """
         messages = [
             SystemMessage(content=self.system_prompt),
             HumanMessage(content=prompt),
         ]
+
+        # If BONDOCS_MOCK is set, return a dummy response for testing
+        if os.getenv("BONDOCS_MOCK") == "1":
+            return "This is a mock response for testing."
+
         try:
-            resp = self.backend.generate_response(messages)
-            # some backends return list
-            if isinstance(resp, list) and resp:
-                resp = resp[0]
-            if isinstance(resp, AIMessage):
-                return resp.content if resp.content is not None else ""
-            if isinstance(resp, str):
-                return resp
-            # Last resort - convert whatever we got to a string
-            try:
-                return str(resp)
-            except Exception:
-                return ""  # Return empty string if conversion fails
+            response = self.backend.generate_response(messages)
+            if isinstance(response, AIMessage):
+                return response.content
+            elif isinstance(response, str):
+                return response
+            elif hasattr(response, "content"):
+                return str(response.content)
+            else:
+                return str(response)
         except Exception as e:
             raise LLMError(f"Error generating response: {str(e)}") from e
 
-    # Legacy method for backward compatibility
+    @handle_errors(error_type=LLMError, severity=ErrorSeverity.ERROR)
     def chat(self, prompt: str) -> str:
-        """Send a prompt to the LLM and get a response (legacy method).
+        """Generate a chat response.
+
+        This is a convenience method for generate_response.
 
         Args:
-            prompt: The prompt to send to the LLM
+            prompt: The prompt to generate a response for.
 
         Returns:
-            The generated response
+            The generated response.
         """
-        try:
-            return self.generate_response(prompt)
-        except LLMError as e:
-            # Keep backward compatibility by not raising exceptions
-            print(f"[red]Error generating response: {str(e)}[/]")
-            return ""
+        return self.generate_response(prompt)
 
     @classmethod
     def reset(cls) -> None:
-        """Reset the LLM backend.
+        """Reset the LLM backend singleton.
 
-        Clears the provider instance and initialized flag, forcing a new provider
-        to be created on the next use. This is useful for testing or when
-        configuration has changed.
+        This is primarily used for testing.
         """
-        if cls._instance is not None:
-            cls._instance._provider = None
-            cls._instance._system_prompt = None
+        cls._instance = None
         cls._initialized = False
+        cls._provider = None
+        cls._system_prompt = None
         ProviderFactory.clear_cached_providers()
 
 

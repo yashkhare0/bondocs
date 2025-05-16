@@ -135,34 +135,3 @@ class GitInterface(Protocol):
             GitError: If there was an error getting the commit message
         """
         pass
-
-
-# Custom exception classes for standardized error handling
-class BondocsError(Exception):
-    """Base exception class for Bondocs errors."""
-
-    pass
-
-
-class ConfigError(BondocsError):
-    """Exception raised for configuration errors."""
-
-    pass
-
-
-class LLMError(BondocsError):
-    """Exception raised for LLM-related errors."""
-
-    pass
-
-
-class GitError(BondocsError):
-    """Exception raised for Git-related errors."""
-
-    pass
-
-
-class PatchError(BondocsError):
-    """Exception raised for patch-related errors."""
-
-    pass

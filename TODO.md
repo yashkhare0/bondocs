@@ -1,53 +1,99 @@
-# TODO
+# Bondocs Development TODOs
 
-## Inconsistencies
+## Completed
 
-1. **Provider Handling**: The fallback logic in `llm.py` is inconsistent with the provider selection. The main detection logic first checks availability for Ollama, then falls back to other providers, but there's duplicated logic across multiple areas.
+- [x] Implement centralized error handling system
+  - [x] Create errors.py module with standardized logging
+  - [x] Add handle_errors decorator for consistent error handling
+  - [x] Update cli.py to use the new error handling system
+  - [x] Update git.py to use the new error handling system
+  - [x] Update llm.py to use the new error handling system
+  - [x] Update document.py to use the new error handling system
+  - [x] Update config.py to use the new error handling system
+  - [x] Update patcher.py to use the new error handling system
+  - [x] Update runbook.py to use the new error handling system
+  - [x] Update changelog.py to use the new error handling system
+  - [x] Fix circular imports by centralizing error definitions
 
-2. **Template Handling**: In `prompt.py`, there are multiple rendering functions (`render_prompt`, `render_runbook_prompt`, `render_changelog_prompt`) with overlapping functionality and parameters.
+- [x] Add unit tests for error handling
+  - [x] Test error decorators
+  - [x] Test user feedback functions
+  - [x] Test custom error types and inheritance
 
-3. **Tool Naming Convention**: Different naming patterns are used for similar functionality - `generate_patch`/`apply_patch` vs `update_changelog`/`update_runbooks`.
+- [x] Update documentation to reflect error handling best practices
+  - [x] Update README.md with error handling guidance
+  - [ ] Add section to developer documentation
 
-4. **System Prompt Parsing**: The approach to parse system prompts from markdown files with custom delimiters (`---system---`) lacks robust error handling.
+## Error Handling System Documentation
 
-## Redundancies
+### Overview
 
-1. **Multiple Prompt Rendering Functions**: The `prompt.py` file has three separate rendering functions that mostly duplicate the same template logic with slightly different parameters.
+Bondocs now uses a centralized error handling system defined in `errors.py`. This system provides:
 
-2. **Configuration Loading**: Configuration is loaded repeatedly in multiple places rather than being cached. The `load()` and `get()` functions in `config.py` will re-parse the config file on every call.
+1. Standardized exception hierarchy inherited from `BondocsError`
+2. Consistent error logging with severity levels
+3. Decorators for standardized error handling patterns
+4. User-friendly error display functions
 
-3. **Detection Logic**: The provider detection and fallback logic could be simplified and made more efficient.
+### Usage Examples
 
-4. **Duplicate Template Loading**: The `_load_template()` function in `prompt.py` is called multiple times when it could be loaded once and reused.
+#### Basic Error Handling
 
-## Bloated/Verbose Code
+```python
+from bondocs.core.errors import handle_errors, GitError
 
-1. **CLI Module**: The `cli.py` file (371 lines) is significantly larger than other modules and contains lengthy template strings that could be moved to separate files.
+@handle_errors(GitError)
+def get_commit_message():
+    # This will automatically handle GitError exceptions
+    return git.get_last_commit_message()
+```
 
-2. **LLM Backend**: The LLM integration has excessive error handling and provider detection logic that could be refactored into smaller, more focused functions.
+#### Severity Levels
 
-3. **Template Rendering**: The template rendering functions have too many optional parameters with complex conditional logic.
+```python
+from bondocs.core.errors import ErrorSeverity, log_error, LLMError
 
-4. **Redundant Environment Variable Handling**: Environment variables are loaded twice - once in `config.py` and again in `llm.py`.
+try:
+    response = llm.generate_response(prompt)
+except Exception as e:
+    log_error(
+        LLMError(f"Failed to generate response: {str(e)}"),
+        severity=ErrorSeverity.WARNING
+    )
+```
 
-## Architectural Issues
+#### Safe Execution With User Feedback
 
-1. **Tight Coupling**: The modules are tightly coupled, making the codebase less maintainable and testable.
+```python
+from bondocs.core.errors import safe_execution
 
-2. **Lack of Abstraction**: Provider logic and prompt handling should be better abstracted with proper interfaces.
+@safe_execution("Failed to apply patch", exit_on_error=True)
+def apply_critical_patch(patch):
+    # If this fails, user sees nice error and program exits
+    return patcher.apply(patch)
+```
 
-3. **Missing Type Hints**: Some functions lack proper type annotations, particularly in error handling paths.
+### Error Types
 
-4. **Inconsistent Error Handling**: Error handling approaches vary across different modules (some use exceptions, others return boolean values).
+- `BondocsError`: Base exception for all Bondocs errors
+- `ConfigError`: Configuration-related errors
+- `GitError`: Git operation errors
+- `LLMError`: Language model errors
+- `PatchError`: Patch application errors
+- `DocumentError`: Document operation errors
+- `RunbookError`: Runbook operation errors
+- `ChangelogError`: Changelog operation errors
 
-## Recommended Improvements
+## Next Steps
 
-1. Create a more consistent provider interface with proper dependency injection
-2. Consolidate template rendering into a single, flexible function
-3. Implement a caching layer for configuration loading
-4. Move lengthy template strings to separate files
-5. Refactor the CLI module into smaller, more focused command handlers
-6. Standardize error handling approach across modules
-7. Improve type annotations and docstrings for better maintainability
+- [x] Apply consistent error handling to remaining modules
+  - [x] document.py
+  - [x] config.py
+  - [x] patcher.py
+  - [x] runbook.py
+  - [x] changelog.py
 
-Would you like me to provide more detailed recommendations for any particular area?
+- [ ] Additional Improvements
+  - [ ] Implement error telemetry for tracking issues
+  - [ ] Add detailed troubleshooting guides for common errors
+  - [ ] Create error code system for better error categorization

@@ -65,3 +65,4 @@ dmypy.json
 /poetry.lock
 /.ruff_cache
 /.poetry
+/bondocs.log

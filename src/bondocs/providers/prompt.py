@@ -1,31 +1,17 @@
-"""Prompt template handling for Bondocs.
+"""Prompt management for Bondocs LLM interactions.
 
-Manages the loading and rendering of prompts for LLM interactions.
+Handles loading, formatting, and rendering of prompts for LLM interactions.
 """
 
+import os
 import re
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, Literal, Optional
 
-from jinja2 import Template
+import jinja2
 
-
-# Cache the template loading to avoid repeated file system access
-@lru_cache(maxsize=1)
-def _load_template() -> Template:
-    """Load the Jinja2 template from the prompt.md file.
-
-    Returns:
-        A compiled Jinja2 template
-
-    Raises:
-        FileNotFoundError: If the template file doesn't exist
-    """
-    template_path = Path(__file__).parent / "prompt.md"
-    if not template_path.exists():
-        raise FileNotFoundError(f"Prompt template not found at {template_path}")
-    return Template(template_path.read_text())
+# Directory where the prompt templates are stored
+_PROMPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 # Cache the system prompt to avoid re-parsing it for each request
@@ -39,15 +25,16 @@ def load_system_prompt() -> str:
 
     Returns:
         The extracted system prompt or an empty string if not found
-
-    Raises:
-        FileNotFoundError: If the prompt template file doesn't exist
     """
-    template_path = Path(__file__).parent / "prompt.md"
-    if not template_path.exists():
-        raise FileNotFoundError(f"Prompt template not found at {template_path}")
+    prompt_path = os.path.join(_PROMPT_DIR, "prompt.md")
 
-    text = template_path.read_text()
+    try:
+        with open(prompt_path, encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        # Fallback to default prompt
+        return """You are a documentation assistant. Your task is to update the documentation based on changes to the codebase.
+Please generate a unified diff to update the documentation."""  # noqa: E501
 
     # Define the pattern to match system prompt section
     system_pattern = r"^---system---\s*\n(.*?)(?:\n\s*\n|\n*$)"
@@ -73,7 +60,56 @@ def load_system_prompt() -> str:
         if system_lines:
             return "\n".join(system_lines).strip()
 
-    return ""
+    return text.strip()  # Return the whole file as a fallback
+
+
+# Cache the template loading to avoid repeated file system access
+@lru_cache(maxsize=1)
+def _load_template() -> jinja2.Template:
+    """Load the Jinja2 template from the prompt.md file.
+
+    Returns:
+        A compiled Jinja2 template
+
+    Raises:
+        FileNotFoundError: If the template file doesn't exist
+    """
+    prompt_path = os.path.join(_PROMPT_DIR, "prompt.md")
+
+    try:
+        with open(prompt_path, encoding="utf-8") as f:
+            template_text = f.read()
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Prompt template not found at {prompt_path}") from None
+
+    env = jinja2.Environment(
+        loader=jinja2.BaseLoader(),
+        trim_blocks=True,
+        lstrip_blocks=True,
+        keep_trailing_newline=True,
+    )
+    return env.from_string(template_text)
+
+
+def render_template(
+    context: dict[str, Any],
+    doc_type: Literal["readme", "runbook", "changelog"] = "readme",
+) -> str:
+    """Render the prompt template with the given context.
+
+    Args:
+        context: The context dictionary with values for template variables
+        doc_type: The type of document to update
+
+    Returns:
+        The rendered template as a string
+    """
+    # Set the document type in the context
+    context["doc_type"] = doc_type
+
+    # Load and render the template
+    template = _load_template()
+    return template.render(**context)
 
 
 def render_prompt(

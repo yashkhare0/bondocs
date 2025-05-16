@@ -7,12 +7,14 @@ import subprocess
 from pathlib import Path
 from typing import Union
 
-from .interfaces import GitError, GitInterface
+from bondocs.core.errors import GitError, handle_errors
+from bondocs.core.interfaces import GitInterface
 
 
 class Git(GitInterface):
     """Git interface implementation."""
 
+    @handle_errors(GitError)
     def get_staged_diff(self) -> str:
         """Get the staged diff.
 
@@ -34,6 +36,7 @@ class Git(GitInterface):
         except Exception as e:
             raise GitError(f"Unexpected error getting staged diff: {str(e)}") from e
 
+    @handle_errors(Exception, default_return=False)
     def stage_file(self, path: Union[str, Path]) -> bool:
         """Stage a file with git add.
 
@@ -43,32 +46,24 @@ class Git(GitInterface):
         Returns:
             True if the file was staged successfully, False otherwise
         """
-        try:
-            subprocess.check_call(["git", "add", str(path)])
-            return True
-        except subprocess.CalledProcessError:
-            return False
-        except Exception:
-            return False
+        subprocess.check_call(["git", "add", str(path)])
+        return True
 
+    @handle_errors(Exception, default_return=False)
     def is_git_repo(self) -> bool:
         """Check if the current directory is a git repository.
 
         Returns:
             True if the current directory is a git repository, False otherwise
         """
-        try:
-            subprocess.check_call(
-                ["git", "rev-parse", "--is-inside-work-tree"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return True
-        except subprocess.CalledProcessError:
-            return False
-        except Exception:
-            return False
+        subprocess.check_call(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
 
+    @handle_errors(GitError)
     def get_last_commit_message(self) -> str:
         """Get the message of the last commit.
 

@@ -11,6 +11,13 @@ from typing import Any, Optional
 import tomllib  # type: ignore
 from dotenv import load_dotenv
 
+from .errors import (
+    BondocsError,
+    ErrorSeverity,
+    handle_errors,
+    log_error,
+    safe_execution,
+)
 from .interfaces import ConfigProvider
 
 # Load environment variables from .env file
@@ -28,6 +35,12 @@ DEFAULTS = {
 CACHE_TIMEOUT = 30
 _last_load_time: float = 0
 _config_cache: dict[str, Any] = {}
+
+
+class ConfigError(BondocsError):
+    """Error raised during configuration operations."""
+
+    pass
 
 
 class Config(ConfigProvider):
@@ -58,11 +71,15 @@ class Config(ConfigProvider):
 
         return False
 
+    @handle_errors(ConfigError, severity=ErrorSeverity.WARNING)
     def get_config(self) -> dict[str, Any]:
         """Get the complete configuration.
 
         Returns:
             The complete configuration as a dictionary
+
+        Raises:
+            ConfigError: If loading the configuration fails
         """
         global _config_cache, _last_load_time
 
@@ -80,7 +97,10 @@ class Config(ConfigProvider):
                 toml_config = tomllib.loads(path.read_text())
                 config.update(toml_config)
             except Exception as e:
-                print(f"[yellow]Warning: Failed to load .bondocs.toml: {e}[/]")
+                log_error(
+                    ConfigError(f"Failed to load .bondocs.toml: {e}"),
+                    severity=ErrorSeverity.WARNING,
+                )
 
         # Environment variables take precedence
         if provider := os.getenv("BONDOCS_PROVIDER"):
@@ -93,8 +113,9 @@ class Config(ConfigProvider):
             try:
                 config["max_tokens"] = int(max_tokens)
             except ValueError:
-                print(
-                    f"[yellow]Warning: Invalid BONDOCS_MAX_TOKENS value: {max_tokens}[/]"  # noqa: E501
+                log_error(
+                    ConfigError(f"Invalid BONDOCS_MAX_TOKENS value: {max_tokens}"),
+                    severity=ErrorSeverity.WARNING,
                 )
 
         # Update cache and timestamp
@@ -116,6 +137,7 @@ class Config(ConfigProvider):
         """
         return self.get_config().get(key, default)
 
+    @handle_errors(ConfigError, severity=ErrorSeverity.INFO)
     def get_env(self, key: str) -> Optional[str]:
         """Get an environment variable value.
 
@@ -124,9 +146,18 @@ class Config(ConfigProvider):
 
         Returns:
             The value of the environment variable or None if not set.
-        """
-        return os.getenv(key)
 
+        Raises:
+            ConfigError: If accessing the environment variable fails
+        """
+        try:
+            return os.getenv(key)
+        except Exception as e:
+            raise ConfigError(
+                f"Failed to get environment variable {key}: {str(e)}"
+            ) from e
+
+    @safe_execution("Failed to reset configuration cache")
     def reset_cache(self) -> None:
         """Reset the configuration cache.
 

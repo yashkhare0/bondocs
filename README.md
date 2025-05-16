@@ -3,7 +3,7 @@
 > **Git‑native, LLM‑powered documentation guardrails.**
 > Keep your `README.md` (and soon run‑books & changelogs) automatically in sync with every commit.
 
-![PyPI](https://img.shields.io/pypi/v/bondocs) ![License](https://img.shields.io/github/license/your‑org/bondocs) ![CI](https://github.com/your‑org/bondocs/actions/workflows/ci.yml/badge.svg)
+![PyPI](https://img.shields.io/pypi/v/bondocs) ![License](https://img.shields.io/github/license/KizunaUX/bondocs) ![CI](https://github.com/KizunaUX/bondocs/actions/workflows/ci.yml/badge.svg)
 
 ---
 
@@ -31,7 +31,7 @@ default_language_version:
   python: python3
 
 repos:
-  - repo: https://github.com/your‑org/bondocs
+  - repo: https://github.com/KizunaUX/bondocs
     rev: v0.1.0
     hooks:
       - id: bondocs
@@ -59,9 +59,12 @@ Your README now contains a new *Usage* snippet referencing `src/app.py` – auto
 ## 🖥️ CLI usage
 
 ```bash
+bondocs init          # initialize project with necessary files
 bondocs run           # patch README from staged diff
 bondocs diff          # show proposed README patch, don't apply
-bondocs config        # print effective configuration
+bondocs show_config   # print effective configuration
+bondocs changelog     # update CHANGELOG.md (experimental)
+bondocs runbook       # update runbooks (experimental)
 ```
 
 Run with `--help` for all options.
@@ -126,31 +129,40 @@ model = "mixtral"             # use local Mixtral on Ollama
 max_tokens = 800              # shorter patches
 ```
 
+The provided example `.bondocs.toml` includes additional configuration options for documentation sections, prompts, ignore patterns, and formatting.
+
 ---
 
 ## 🛠️ Architecture
 
 ```bash
-            +----------------+
-  git diff  |   diff.py      |  summarize
------------->   bullets      +----+
-            +----------------+    |
-                                      | prompt
-                                      v
-            +----------------+   +---------------+
-            |  llm.py        |-->|  LLM backend   |
-            |  backend pick  |   |  (Ollama/provider)
-            +----------------+   +---------------+
-                                      |
-                    diff patch        v
-            +----------------+   +---------------+
-            | patcher.py     |-->|   patch(1)    |
-            +----------------+   +---------------+
+                      +----------------+
+    git diff          | git/diff.py    |  summarize
+  --------------->    |                +----+
+                      +----------------+    |
+                                            | prompt
+                                            v
+  +------------------+    +----------------+   +---------------+
+  | core/errors.py   |--->| providers/llm  |-->| LLM backend   |
+  | error handling   |    | provider mgmt  |   | (Ollama/cloud)|
+  +------------------+    +----------------+   +---------------+
+                                            |
+                          diff patch        v
+                      +-------------------+ +---------------+
+                      | document/patcher  |->|   patch(1)   |
+                      +-------------------+ +---------------+
 ```
 
-* **diff.py** – extracts staged diff, condenses to bullet summary.
-* **llm.py** – picks Ollama if `localhost:11434` responds; else falls back to the configured fallback provider.
-* **patcher.py** – renders Jinja prompt, calls LLM, applies unified diff via `patch -p0`.
+* **git/diff.py** – extracts staged diff, condenses to bullet summary
+* **providers/llm.py** – manages LLM providers with intelligent fallback
+* **document/patcher.py** – applies patches with proper validation
+* **core/errors.py** – provides centralized error handling throughout
+
+The modular architecture enables:
+- Clear separation of concerns
+- Easy extension with new LLM providers
+- Type-safe interfaces via protocols
+- Consistent error handling patterns
 
 ---
 
@@ -158,15 +170,107 @@ max_tokens = 800              # shorter patches
 
 ```bash
 src/bondocs/
-├── cli.py         # Click commands
-├── diff.py        # Staged diff helpers
-├── llm.py         # Backend abstraction
-├── patcher.py     # Prompt + patch
-├── prompt.md      # Jinja template
-└── config.py      # Env & TOML loader
+├── core/
+│   ├── __init__.py    # Core exports
+│   ├── config.py      # Configuration management
+│   ├── errors.py      # Error system
+│   └── interfaces.py  # Protocols and interfaces
+├── document/
+│   ├── __init__.py    # Document exports
+│   ├── document.py    # Document management
+│   ├── changelog.py   # Changelog generation
+│   ├── patcher.py     # Patch utilities
+│   └── runbook.py     # Runbook management
+├── git/
+│   ├── __init__.py    # Git exports
+│   ├── git.py         # Git operations
+│   └── diff.py        # Diff utilities
+├── providers/
+│   ├── __init__.py    # Provider exports
+│   ├── llm.py         # LLM backend abstraction
+│   └── prompt.py      # Prompt management
+├── utils/
+│   ├── __init__.py    # Utility exports
+│   └── templates.py   # Template rendering
+└── cli.py             # Command-line interface
 ```
 
+The codebase follows a modular structure with clear separation of concerns:
+- **core**: Contains foundational components used throughout the application
+- **document**: Handles all document operations and patching
+- **git**: Manages Git interactions and diff processing
+- **providers**: Controls LLM integration with various backends
+- **utils**: Houses utility functions and templates
+
 See **`CONTRIBUTING.md`** for dev setup and architectural decisions.
+
+### Import Conventions
+
+Bondocs follows these import conventions:
+
+```python
+# Import from a module within the same package
+from .errors import ConfigError
+
+# Import from another package
+from bondocs.core.errors import handle_errors, GitError
+from bondocs.document import doc_manager
+from bondocs.providers import llm
+```
+
+When contributing, ensure you use the package name (not src.bondocs) in imports for consistent behavior.
+
+---
+
+## 🛡️ Error Handling
+
+Bondocs uses a centralized error handling system to provide consistent error reporting and recovery throughout the application. All errors inherit from a common `BondocsError` base class.
+
+### Error Handling Decorators
+
+```python
+from bondocs.core.errors import handle_errors, GitError
+
+@handle_errors(GitError, severity=ErrorSeverity.ERROR)
+def get_commit_message():
+    # This function will automatically handle GitError exceptions
+    # and log them with ERROR severity
+    return git.get_last_commit_message()
+```
+
+### Safe Execution Pattern
+
+```python
+from bondocs.core.errors import safe_execution
+
+@safe_execution("Failed to update changelog", exit_on_error=False)
+def update_changelog(commit_message):
+    # This function will display a user-friendly error message
+    # if the operation fails
+    return changelog_generator.generate(commit_message)
+```
+
+### Severity Levels
+
+Bondocs errors are categorized by severity:
+- `INFO`: Information only, no action required
+- `WARNING`: Potential issue, operation continues
+- `ERROR`: Operation failed, but program continues
+- `CRITICAL`: Fatal error requiring program termination
+
+### Error Types
+
+The following error types are available:
+- `BondocsError`: Base exception for all errors
+- `ConfigError`: Configuration-related errors
+- `GitError`: Git operation errors
+- `LLMError`: Language model errors
+- `PatchError`: Patch application errors
+- `DocumentError`: Document operation errors
+- `RunbookError`: Runbook operation errors
+- `ChangelogError`: Changelog operation errors
+
+For advanced error handling patterns and implementation details, refer to the `errors.py` module.
 
 ---
 
@@ -186,12 +290,23 @@ CI pipeline lives in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and 
 
 ## 🛣️ Roadmap
 
-* [ ] Changelog autogeneration (`CHANGELOG.md`)
-* [ ] Run‑book support (detect `docs/runbook/*.md`)
+### Completed
+* [x] Project restructuring with modular architecture
+* [x] Centralized error handling system
+* [x] Standardized import conventions
+* [x] Type hints and static analysis support
+
+### In Development
+* [ ] Enhanced changelog generation (`CHANGELOG.md`)
+* [ ] Improved run‑book support (detect `docs/runbook/*.md`)
 * [ ] Doc‑coverage badge & CI gate
+
+### Future Plans
 * [ ] VS Code preview extension
 * [ ] Multi‑language translation add‑on
 * [ ] Compliance‑pack PDF export
+* [ ] Error telemetry and reporting system
+* [ ] Detailed troubleshooting guides
 
 Track progress in the **Issues** tab.
 
@@ -246,9 +361,6 @@ pre-commit install
 # Run formatters directly
 black .
 ruff --fix .
-
-# Run all pre-commit hooks on all files
-pre-commit run --all-files
 ```
 
 ---
