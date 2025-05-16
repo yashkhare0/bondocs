@@ -1,0 +1,18 @@
+# Example .bondocs.toml for Bondocs
+
+# LLM Provider (default: "ollama")
+provider = "ollama"
+
+# Fallback provider if primary is unavailable (default: "openai")
+fallback_provider = "openai"
+
+# Model name (default: "mistral-small3.1:latest")
+model = "mistral-small3.1:latest"
+
+# Maximum tokens for LLM response (default: 1024)
+max_tokens = 1024
+
+# You can add more configuration options as needed, e.g.:
+# [documentation]
+# watch_files = ["src/**/*.py", "tests/**/*.py", "*.md"]
+# sections = ["Installation", "Usage", "API Reference", "Examples"]

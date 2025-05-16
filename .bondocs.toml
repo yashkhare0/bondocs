@@ -1,0 +1,53 @@
+# Bondocs configuration
+# LLM Configuration
+model = "gpt-3.5-turbo"  # or "mixtral" if using Ollama
+provider = "ollama"      # ollama, openai, anthropic, azure
+fallback_provider = "openai"  # Provider to use if primary is unavailable
+max_tokens = 1024        # Maximum tokens for LLM response
+temperature = 0.2        # LLM temperature (0.0 to 1.0)
+
+# Documentation Settings
+[documentation]
+# Files to monitor for changes
+watch_files = [
+    "src/**/*.py",      # Python source files
+    "tests/**/*.py",    # Test files
+    "*.md",              # Markdown files
+    "pyproject.toml",   # Project configuration
+    "Makefile",         # Development tasks
+    ".pre-commit-config.yaml" # Pre-commit configuration
+]
+
+# Sections to update in README
+sections = [
+    "Installation",
+    "Usage",
+    "API Reference",
+    "Examples"
+]
+
+# Custom prompt templates
+[prompts]
+# Custom prompt for specific file types
+python = """
+Update the documentation to reflect changes in the Python code.
+Focus on function signatures, parameters, and return types.
+"""
+
+# Ignore patterns for files
+[ignore]
+patterns = [
+    "*.pyc",
+    "__pycache__",
+    ".git/*",
+    "venv/*"
+]
+
+# Output formatting
+[format]
+# Maximum line length for generated documentation
+max_line_length = 88
+# Whether to use code blocks for examples
+use_code_blocks = true
+# Whether to include type hints in documentation
+include_type_hints = true
