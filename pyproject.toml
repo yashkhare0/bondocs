@@ -30,6 +30,7 @@ pytest-git = "^1.7.0"
 black = "^24.4"
 ruff = "^0.5.3"
 pre-commit = "^4.2.0"   # Updated to latest version
+mypy = "^1.15.0"
 
 [tool.poetry.scripts]
 bondocs = "bondocs.cli:app"
@@ -114,3 +115,17 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/*.py" = ["D", "E501", "F841"]  # Ignore docstring issues, long lines, and unused variables in tests
 "*/__init__.py" = ["F401", "D104"]    # Ignore unused imports and missing docstrings in __init__ files
+
+# MyPy configuration
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = "git.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "src.bondocs.llm"
+disable_error_code = ["no-any-return", "arg-type", "return-value"]

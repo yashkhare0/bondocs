@@ -4,20 +4,32 @@ Manages the loading and rendering of prompts for LLM interactions.
 """
 
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Optional
 
 from jinja2 import Template
 
 
+# Cache the template loading to avoid repeated file system access
+@lru_cache(maxsize=1)
 def _load_template() -> Template:
-    """Load the Jinja2 template from the prompt.md file."""
+    """Load the Jinja2 template from the prompt.md file.
+
+    Returns:
+        A compiled Jinja2 template
+
+    Raises:
+        FileNotFoundError: If the template file doesn't exist
+    """
     template_path = Path(__file__).parent / "prompt.md"
     if not template_path.exists():
         raise FileNotFoundError(f"Prompt template not found at {template_path}")
     return Template(template_path.read_text())
 
 
+# Cache the system prompt to avoid re-parsing it for each request
+@lru_cache(maxsize=1)
 def load_system_prompt() -> str:
     """Load the system prompt from the prompt.md file.
 
@@ -139,3 +151,12 @@ def render_changelog_prompt(
         doc_type="changelog",
         commit_message=commit_message,
     )
+
+
+def reset_cache() -> None:
+    """Reset the cached templates and system prompts.
+
+    This is useful for testing or when templates have been modified.
+    """
+    _load_template.cache_clear()
+    load_system_prompt.cache_clear()

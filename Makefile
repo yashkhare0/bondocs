@@ -1,4 +1,4 @@
-.PHONY: install test format lint precommit clean
+.PHONY: install test format lint precommit clean fix
 
 # Install dependencies
 install:
@@ -12,6 +12,10 @@ test:
 format:
 	poetry run black .
 	poetry run ruff check --fix .
+
+# Apply code fixes with Ruff only
+fix:
+	poetry run ruff check . --fix
 
 # Lint code with Ruff
 lint:
