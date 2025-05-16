@@ -21,7 +21,8 @@ from langchain.schema import (  # type: ignore
     SystemMessage,
 )
 
-from .config import env, get
+from .config import config
+from .interfaces import LLMError, LLMInterface
 from .prompt import load_system_prompt
 
 # Provider instance cache to avoid recreating providers
@@ -71,7 +72,10 @@ class OllamaProvider(LLMProvider):
         self, messages: Sequence[Union[SystemMessage, HumanMessage]]
     ) -> Any:
         """Generate a response from the LLM based on the input messages."""
-        return self.client(cast(list[BaseMessage], list(messages)))
+        try:
+            return self.client(cast(list[BaseMessage], list(messages)))
+        except Exception as e:
+            raise LLMError(f"Error generating response from Ollama: {str(e)}") from e
 
     @classmethod
     def is_available(cls) -> bool:
@@ -94,14 +98,14 @@ class OpenAIProvider(LLMProvider):
             max_tokens (int): The maximum number of tokens to generate.
 
         Raises:
-            ValueError: If the OpenAI API key is not set.
+            LLMError: If the OpenAI API key is not set.
         """
         # Import here to avoid startup overhead if not used
         from langchain_openai import ChatOpenAI  # type: ignore
 
-        api_key = env("OPENAI_API_KEY")
+        api_key = config.get_env("OPENAI_API_KEY")
         if not api_key:
-            raise ValueError(
+            raise LLMError(
                 "OPENAI_API_KEY environment variable is required for OpenAI provider"
             )
 
@@ -117,7 +121,10 @@ class OpenAIProvider(LLMProvider):
         self, messages: Sequence[Union[SystemMessage, HumanMessage]]
     ) -> Any:
         """Generate a response from the LLM based on the input messages."""
-        return self.client(cast(list[BaseMessage], list(messages)))
+        try:
+            return self.client(cast(list[BaseMessage], list(messages)))
+        except Exception as e:
+            raise LLMError(f"Error generating response from OpenAI: {str(e)}") from e
 
 
 class AnthropicProvider(LLMProvider):
@@ -131,14 +138,14 @@ class AnthropicProvider(LLMProvider):
             max_tokens (int): The maximum number of tokens to generate.
 
         Raises:
-            ValueError: If the Anthropic API key is not set.
+            LLMError: If the Anthropic API key is not set.
         """
         # Import here to avoid startup overhead if not used
         from langchain_anthropic import ChatAnthropic  # type: ignore
 
-        api_key = env("ANTHROPIC_API_KEY")
+        api_key = config.get_env("ANTHROPIC_API_KEY")
         if not api_key:
-            raise ValueError(
+            raise LLMError(
                 "ANTHROPIC_API_KEY environment variable is required for Anthropic provider"  # noqa: E501
             )
 
@@ -157,7 +164,10 @@ class AnthropicProvider(LLMProvider):
         self, messages: Sequence[Union[SystemMessage, HumanMessage]]
     ) -> Any:
         """Generate a response from the LLM based on the input messages."""
-        return self.client(cast(list[BaseMessage], list(messages)))
+        try:
+            return self.client(cast(list[BaseMessage], list(messages)))
+        except Exception as e:
+            raise LLMError(f"Error generating response from Anthropic: {str(e)}") from e
 
 
 class AzureProvider(LLMProvider):
@@ -171,14 +181,14 @@ class AzureProvider(LLMProvider):
             max_tokens (int): The maximum number of tokens to generate.
 
         Raises:
-            ValueError: If the Azure API key is not set.
+            LLMError: If the Azure API key is not set.
         """
         # Import here to avoid startup overhead if not used
         from langchain_openai import AzureChatOpenAI  # type: ignore
 
-        api_key = env("AZURE_AI_API_KEY")
+        api_key = config.get_env("AZURE_AI_API_KEY")
         if not api_key:
-            raise ValueError(
+            raise LLMError(
                 "AZURE_AI_API_KEY environment variable is required for Azure provider"
             )
 
@@ -195,7 +205,10 @@ class AzureProvider(LLMProvider):
         self, messages: Sequence[Union[SystemMessage, HumanMessage]]
     ) -> Any:
         """Generate a response from the LLM based on the input messages."""
-        return self.client(cast(list[BaseMessage], list(messages)))
+        try:
+            return self.client(cast(list[BaseMessage], list(messages)))
+        except Exception as e:
+            raise LLMError(f"Error generating response from Azure: {str(e)}") from e
 
 
 class ProviderFactory:
@@ -220,15 +233,15 @@ class ProviderFactory:
             An instance of the requested provider.
 
         Raises:
-            ValueError: If the provider is not supported.
+            LLMError: If the provider is not supported.
         """
         provider_name = provider_name.lower()
         provider_class = cls._PROVIDERS.get(provider_name)
         if not provider_class:
-            raise ValueError(f"Unsupported provider: {provider_name}")
+            raise LLMError(f"Unsupported provider: {provider_name}")
 
-        model = get("model", "mistral-small3.1:latest")
-        max_tokens = get("max_tokens", 1024)
+        model = config.get_value("model", "mistral-small3.1:latest")
+        max_tokens = config.get_value("max_tokens", 1024)
 
         # Create a unique key for the provider instance
         instance_key = f"{provider_name}:{model}:{max_tokens}"
@@ -241,16 +254,21 @@ class ProviderFactory:
                 return provider  # Type is correct as provider is LLMProvider
 
         # Create a new provider instance
-        if provider_name == "ollama":
-            provider = provider_class(model)
-        else:
-            provider = provider_class(model, max_tokens)
+        try:
+            if provider_name == "ollama":
+                provider = provider_class(model)
+            else:
+                provider = provider_class(model, max_tokens)
 
-        if reuse:
-            # Store weakref to avoid memory leaks
-            _provider_instances[instance_key] = weakref.ref(provider)
+            if reuse:
+                # Store weakref to avoid memory leaks
+                _provider_instances[instance_key] = weakref.ref(provider)
 
-        return provider  # Type is correct as provider is LLMProvider
+            return provider  # Type is correct as provider is LLMProvider
+        except Exception as e:
+            raise LLMError(
+                f"Failed to create provider {provider_name}: {str(e)}"
+            ) from e
 
     @classmethod
     def clear_cached_providers(cls) -> None:
@@ -259,7 +277,7 @@ class ProviderFactory:
         _provider_instances = {}
 
 
-class LLMBackend:
+class LLMBackend(LLMInterface):
     """Large Language Model backend integration.
 
     Handles detection and initialization of the appropriate language model
@@ -319,10 +337,10 @@ class LLMBackend:
             An initialized provider instance based on configuration
 
         Raises:
-            ValueError: If no suitable provider can be initialized
+            LLMError: If no suitable provider can be initialized
         """
-        primary_provider = get("provider", "ollama").lower()
-        fallback_provider = get("fallback_provider", "openai").lower()
+        primary_provider = config.get_value("provider", "ollama").lower()
+        fallback_provider = config.get_value("fallback_provider", "openai").lower()
 
         # Try primary provider first
         if primary_provider == "ollama" and not OllamaProvider.is_available():
@@ -334,41 +352,69 @@ class LLMBackend:
 
         try:
             return ProviderFactory.create(primary_provider)
-        except ValueError as e:
+        except LLMError as e:
             if primary_provider != fallback_provider:
                 print(
                     f"[yellow]Warning: {str(e)}. "
                     f"Falling back to {fallback_provider}.[/]"
                 )
-                return ProviderFactory.create(fallback_provider)
+                try:
+                    return ProviderFactory.create(fallback_provider)
+                except LLMError as e2:
+                    raise LLMError(
+                        f"Failed to initialize primary and fallback providers: {str(e2)}"  # noqa: E501
+                    ) from e2
             raise
 
-    def chat(self, prompt: str) -> str:  # type: ignore[return-value]
-        """Send a prompt to the LLM and get a response.
+    def generate_response(self, prompt: str) -> str:
+        """Generate a response to a prompt.
 
         Args:
-            prompt: The text prompt to send to the LLM.
+            prompt: The prompt to generate a response for
 
         Returns:
-            The text response from the LLM.
+            The generated response
+
+        Raises:
+            LLMError: If there was an error generating a response
         """
         messages = [
             SystemMessage(content=self.system_prompt),
             HumanMessage(content=prompt),
         ]
-        resp = self.backend.generate_response(messages)
-        # some backends return list
-        if isinstance(resp, list) and resp:
-            resp = resp[0]
-        if isinstance(resp, AIMessage):
-            return resp.content if resp.content is not None else ""
-        if isinstance(resp, str):
-            return resp
-        # Last resort - convert whatever we got to a string
         try:
-            return str(resp)
-        except Exception:
-            return ""  # Return empty string if conversion fails
+            resp = self.backend.generate_response(messages)
+            # some backends return list
+            if isinstance(resp, list) and resp:
+                resp = resp[0]
+            if isinstance(resp, AIMessage):
+                return resp.content if resp.content is not None else ""
+            if isinstance(resp, str):
+                return resp
+            # Last resort - convert whatever we got to a string
+            try:
+                return str(resp)
+            except Exception:
+                return ""  # Return empty string if conversion fails
+        except Exception as e:
+            raise LLMError(f"Error generating response: {str(e)}") from e
+
+    # Legacy method for backward compatibility
+    def chat(self, prompt: str) -> str:
+        """Send a prompt to the LLM and get a response (legacy method).
+
+        Args:
+            prompt: The prompt to send to the LLM
+
+        Returns:
+            The generated response
+        """
+        try:
+            return self.generate_response(prompt)
+        except LLMError as e:
+            # Keep backward compatibility by not raising exceptions
+            print(f"[red]Error generating response: {str(e)}[/]")
+            return ""
 
     @classmethod
     def reset(cls) -> None:
@@ -383,3 +429,7 @@ class LLMBackend:
             cls._instance._system_prompt = None
         cls._initialized = False
         ProviderFactory.clear_cached_providers()
+
+
+# Global singleton instance for convenience
+llm = LLMBackend()

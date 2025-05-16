@@ -3,12 +3,12 @@
 Handles creating and applying documentation patches using LLMs.
 """
 
-import subprocess
-import tempfile
 from pathlib import Path
 
-from .llm import LLMBackend
-from .prompt import render_prompt  # jinja2 template render
+from .document import doc_manager
+from .interfaces import LLMError
+from .llm import llm
+from .prompt import render_prompt
 
 
 def generate_readme_patch(summary: str) -> str:
@@ -20,14 +20,24 @@ def generate_readme_patch(summary: str) -> str:
     Returns:
         A unified diff string for updating the README.
     """
-    readme = (
-        Path("README.md").read_text(encoding="utf-8")
-        if Path("README.md").exists()
-        else ""
-    )
-    prompt = render_prompt(document_content=readme, summary=summary, doc_type="readme")
-    llm = LLMBackend()
-    return llm.chat(prompt)
+    try:
+        # Get the README content, defaulting to empty string if not found
+        readme_path = Path("README.md")
+        try:
+            readme = doc_manager.get_document_content(readme_path)
+        except FileNotFoundError:
+            readme = ""
+
+        # Generate the prompt
+        prompt = render_prompt(
+            document_content=readme, summary=summary, doc_type="readme"
+        )
+
+        # Generate the patch
+        return llm.generate_response(prompt)
+    except LLMError as e:
+        print(f"[red]Error generating README patch: {str(e)}[/]")
+        return ""
 
 
 def apply_patch(patch: str) -> bool:
@@ -39,25 +49,8 @@ def apply_patch(patch: str) -> bool:
     Returns:
         True if patch was applied successfully, False otherwise.
     """
-    if not patch.strip():
-        return False
-    if not (
-        "+++ b/README.md" in patch
-        or "+++ b/CHANGELOG.md" in patch
-        or "+++ b/docs/runbook" in patch
-    ):
-        return False
     try:
-        with tempfile.NamedTemporaryFile("w+", suffix=".patch", encoding="utf-8") as f:
-            f.write(patch)
-            f.flush()
-            proc = subprocess.run(
-                ["patch", "-p0", "-i", f.name], capture_output=True, text=True
-            )
-            if proc.returncode != 0:
-                print(f"[red]Patch failed: {proc.stderr}[/]")
-                return False
-            return True
+        return doc_manager.apply_patch(patch)
     except Exception as e:
         print(f"[red]Error applying patch: {str(e)}[/]")
         return False

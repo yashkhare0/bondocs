@@ -3,7 +3,6 @@
 Provides commands for initializing and running Bondocs.
 """
 
-import subprocess
 import sys
 from pathlib import Path
 
@@ -11,8 +10,10 @@ import click
 from rich import print  # type: ignore
 
 from .changelog import update_changelog
-from .config import load
-from .diff import staged_diff, summarize
+from .config import config
+from .document import doc_manager
+from .git import git, summarize_diff
+from .interfaces import GitError
 from .patcher import apply_patch, generate_readme_patch
 from .runbook import update_runbooks
 from .templates import BONDOCS_CONFIG, DEFAULT_README, PRE_COMMIT_CONFIG
@@ -32,27 +33,10 @@ def _create_file(path: Path, content: str, file_type: str) -> None:
         file_type: Type of file for logging messages
     """
     if not path.exists():
-        path.write_text(content)
+        doc_manager.update_document(path, content)
         print(f"[green]Created {file_type}[/]")
     else:
         print(f"[yellow]Warning: {file_type} already exists[/]")
-
-
-def _check_git_repo() -> bool:
-    """Check if the current directory is a git repository.
-
-    Returns:
-        True if the current directory is a git repository, False otherwise
-    """
-    try:
-        subprocess.check_call(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return True
-    except subprocess.CalledProcessError:
-        return False
 
 
 def _get_staged_changes() -> tuple[str, str]:
@@ -61,36 +45,22 @@ def _get_staged_changes() -> tuple[str, str]:
     Returns:
         A tuple of (diff, summary) strings
     """
-    diff = staged_diff()
-    if not diff.strip():
-        return "", ""
-
-    return diff, summarize(diff)
-
-
-def _stage_file(file_path: str) -> bool:
-    """Stage a file with git add.
-
-    Args:
-        file_path: Path to the file to stage
-
-    Returns:
-        True if the file was staged successfully, False otherwise
-    """
     try:
-        subprocess.check_call(["git", "add", file_path])
-        print(f"[green]{file_path} re-staged.[/]")
-        return True
-    except subprocess.CalledProcessError:
-        print(f"[yellow]Warning: Failed to re-stage {file_path}[/]")
-        return False
+        diff = git.get_staged_diff()
+        if not diff.strip():
+            return "", ""
+
+        return diff, summarize_diff(diff)
+    except GitError as e:
+        print(f"[red]Error getting git changes: {str(e)}[/]")
+        return "", ""
 
 
 @app.command()
 def init():
     """Initialize bondocs in the current project."""
     # Check if we're in a git repository
-    if not _check_git_repo():
+    if not git.is_git_repo():
         print("[red]Error: Not a git repository. Please run 'git init' first.[/]")
         sys.exit(1)
 
@@ -103,13 +73,15 @@ def init():
 
     # Install pre-commit hooks
     try:
+        import subprocess
+
         subprocess.check_call(
             ["pre-commit", "install"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         print("[green]Installed pre-commit hooks[/]")
-    except subprocess.CalledProcessError:
+    except Exception:
         print(
             "[yellow]Warning: Failed to install pre-commit hooks. "
             "Please install pre-commit first.[/]"
@@ -141,7 +113,7 @@ def run():
 
     if apply_patch(patch):
         print("[green]README.md updated ✨[/]")
-        _stage_file("README.md")
+        git.stage_file("README.md")
     else:
         print("[red]Failed to update README.md.[/]")
 
@@ -151,17 +123,14 @@ def changelog():
     """Update CHANGELOG.md based on staged diff."""
     # Get commit message from last commit
     try:
-        commit_message = subprocess.check_output(
-            ["git", "log", "-1", "--pretty=%B"],
-            text=True,
-        ).strip()
-    except subprocess.CalledProcessError:
-        print("[red]Error: Failed to get commit message.[/]")
+        commit_message = git.get_last_commit_message()
+    except GitError as e:
+        print(f"[red]Error: {str(e)}[/]")
         sys.exit(1)
 
     if update_changelog(commit_message):
         print("[green]CHANGELOG.md updated ✨[/]")
-        _stage_file("CHANGELOG.md")
+        git.stage_file("CHANGELOG.md")
     else:
         print("[yellow]No CHANGELOG.md changes needed.[/]")
 
@@ -172,9 +141,11 @@ def runbook():
     if update_runbooks():
         print("[green]Runbooks updated ✨[/]")
         try:
+            import subprocess
+
             subprocess.check_call(["git", "add", "docs/runbook/*.md"])
             print("[green]Runbooks re-staged.[/]")
-        except subprocess.CalledProcessError:
+        except Exception:
             print("[yellow]Warning: Failed to re-stage runbooks[/]")
     else:
         print("[yellow]No runbook changes needed.[/]")
@@ -201,11 +172,11 @@ def diff():
 
 
 @app.command()
-def config():
+def show_config():
     """Show current configuration."""
-    config = load()
+    cfg = config.get_config()
     print("[green]Current configuration:[/]")
-    for key, value in config.items():
+    for key, value in cfg.items():
         print(f"  {key}: {value}")
 
 
